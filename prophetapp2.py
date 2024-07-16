@@ -175,3 +175,431 @@ else:
 # st.write('RMSE: ',rmse)
 show_plots = st.sidebar.checkbox("Launch Forecast", value=False)
 
+if show_plots:
+    forecast = model.predict(future)
+    st.subheader('Forecast Results')  
+    st.write(forecast)
+    ypred = forecast[:train.shape[0]]
+    
+    # Display performance metrics
+    st.subheader('Performance Metrics')
+    # mae = round(mean_absolute_error(train.y,forecast.yhat[:train.shape[0]]),2)
+    mae = round(mean_absolute_error(train.y, ypred.yhat),2)
+    st.write('MAE: ',mae)
+    mape = round(mean_absolute_percentage_error(train.y, ypred.yhat),2)
+    st.write('MAPE: ',mape)
+    
+    # Plot forecast
+    st.subheader('Forecast')
+    fig1 = model.plot(forecast)
+    st.pyplot(fig1)
+    
+    # Plot components
+    st.subheader('Components')
+    fig2 = model.plot_components(forecast)
+    st.pyplot(fig2)
+
+    # import streamlit as st
+    # from datetime import datetime, timedelta
+    fig=go.Figure()
+    
+    fig.add_trace(go.Scatter(x=forecast["ds"], y=forecast['yhat_upper'], name="Forecast_Upper", mode="lines", line_color="lightblue"))
+    # fig.add_trace(go.Scatter(x=ypred["ds"], y=ypred['yhat'], name="Predicted", mode="lines", line_color="blue"))
+    fig.add_trace(go.Scatter(x=forecast["ds"], y=forecast['yhat'], name="Forecast", mode="lines", line_color="blue"))
+    fig.add_trace(go.Scatter(x=train["ds"], y=train['y'], name="Actual", mode="lines", line_color="green"))
+    
+    fig.update_layout(
+        title= "Hourly Volume Forecast", xaxis_title="Date", yaxis_title="Volume"
+    )
+    st.plotly_chart(fig)
+    
+    
+    ##********************** Service Risk Assesment ******************************* 
+    st.sidebar.title("4. Service Risk Assesment")
+    
+    responseTime = st.sidebar.number_input("Expected Response Time", min_value=0.0, max_value= 2.0, value=0.0, step=0.1)
+    expectedTPS = st.sidebar.number_input("Expected TPS", min_value=0, value=0)
+    #st.write("Response Time: ", responseTime)
+    
+    assesment = st.sidebar.checkbox("Peak Hour Forecast Calculation", value=False)
+    
+    if assesment:
+        #st.subheader('Current capacity of Application specified in excel')
+        
+        #Volume Forecast From Prophet Script
+        # ForecastData = pd.read_excel(r'ForecastOutput.xlsx')
+        ForecastData = forecast
+        #st.write(AppName)
+        #st.write(applicationData.head())
+    
+        totalCapacity = applicationData.loc[applicationData['Application'] == AppName]['Current Capacity - TPS'].item()
+        # totalCapacity = int(re.sub("[^0-9]", "", totalCapacity)) #remove spaces and TPS
+    
+        # Pull forcasted data
+        # Forecasted data generated from running forecasting script first
+        data2 = ForecastData[['ds', 'yhat_lower','yhat_upper','yhat']]
+    
+        #determining average peak hour TPS
+        PeakHourAverage = ForecastData.loc[:, 'yhat']
+    
+        data2.loc[:,'AveragePeakHour'] = PeakHourAverage/3600
+    
+        PeakHour_Lower = ForecastData.loc[:, 'yhat_lower']
+        data2.loc[:, 'AveragePeakHour_Lower'] = PeakHour_Lower/3600
+    
+        PeakHour_Upper = ForecastData.loc[:, 'yhat_upper']
+        data2.loc[:, 'AveragePeakHour_Upper'] = PeakHour_Upper/3600
+    
+        history_PeakHour = train.loc[:, 'y']
+        train.loc[:, 'AveragePeakHour'] = history_PeakHour/3600
+    
+        st.subheader('Current Capacity of Application For Peak Hour')
+        st.write("Total Current Capacity of %s: %d" % ( AppName, totalCapacity))
+    
+        multiplier = 2
+        data2.loc[:, 'PeakHourForecast'] = data2.loc[:, 'AveragePeakHour'] * multiplier
+        data2.loc[:, 'PeakHourForecast_Upper'] = data2.loc[:, 'AveragePeakHour_Upper'] * multiplier
+        data2.loc[:, 'PeakHourForecast_Lower'] = data2.loc[:, 'AveragePeakHour_Lower'] * multiplier
+        train.loc[:, 'PeakHourForecast'] = train.loc[:, 'AveragePeakHour'] * multiplier
+    
+        certResponseTime = applicationData.loc[applicationData['Application'] == AppName]['Certified Response Time (s)'].item()
+    
+        fig=go.Figure()
+        fig.add_trace(go.Scatter(x=data2["ds"], y=data2.loc[:,'PeakHourForecast_Lower'], name="PeakHourForecast_Lower", mode="lines", line_color="lightblue"))
+        fig.add_trace(go.Scatter(x=data2["ds"], y=data2.loc[:,'PeakHourForecast_Upper'], name="PeakHourForecast_Upper", mode="lines", line_color="lightblue"))
+        fig.add_trace(go.Scatter(x=data2["ds"], y=data2.loc[:,'PeakHourForecast'], name="PeakHourForecast", mode="lines", line_color='blue'))
+        fig.add_trace(go.Scatter(x=train["ds"], y=train.loc[:,'PeakHourForecast'], name="PeakHourForecast_History", mode="lines", line_color='lightgreen'))
+        # fig.add_trace(go.Scatter(x=data2["ds"], y=data2.loc[:,'PeakHourForecast_Upper'], name="PeakHourForecast_upper", mode="lines", line_color="lightblue"))
+        fig.add_hline(y=totalCapacity, line_color="red", annotation_text="Current Capacity", annotation_position="top left")
+        # fig.add_hline(y=totalCapacity/responseTimeIncrease, line_color="yellow", annotation_text="Capacity with " + str(responseTimeIncrease) + "x response times", annotation_position="top left")
+        if responseTime > certResponseTime:
+            fig.add_hline(y=totalCapacity/(responseTime/certResponseTime), line_color="yellow", annotation_text="Capacity with " + str(responseTime) + "s response times", annotation_position="top left")
+
+        # fig.add_hline(y=totalCapacity/2, line_dash="dash", line_color="red", annotation_text="50% Capacity", annotation_position="top left")
+        fig.update_layout(
+            title="Peak " + AppName + " TPS", xaxis_title="Date", yaxis_title="TPS"
+        )
+        # fig.update_xaxes(range=[data['ds'].max()-timedelta(days=30), pred_CI95['ds'].max()])
+        st.plotly_chart(fig)
+    
+    
+        st.subheader('Forecast Over Capacity Limit For Application')
+        column_name = 'PeakHourForecast_Upper'
+        column = data2.loc[:, column_name]
+        count = column[column > totalCapacity].count()
+        st.write("Number of forecasted breaches of current capacity: %d" % count)
+    
+    
+        maxTPS = data2[column_name].max()
+    
+        totalCapPer = applicationData.loc[applicationData['Application'] == AppName]['Capacity Per Server'].item()
+        totalServers = applicationData.loc[applicationData['Application'] == AppName]['Current No. of servers'].item()
+    
+        st.markdown(f"## <span style='color:blue'>{AppName}</span>", unsafe_allow_html=True)
+        st.write(f"Current capacity: {totalCapacity} TPS")
+        st.markdown(f"Max TPS: <span style='color:red'>{round(maxTPS, 2)}</span>", unsafe_allow_html=True)
+    
+        if totalCapPer != 0:
+            newNodes = math.ceil(maxTPS / totalCapPer) - totalServers
+        else:
+            st.error("Error: The 'totalCapPer' variable is zero, cannot calculate 'newNodes'.")
+    
+        tpsIncrease = maxTPS - totalCapacity
+    
+        #new_capacity = st.text_input("Enter the updated capacity after adding new hardware: ")
+        new_capacity = st.sidebar.number_input("Updated Capacity With New Hardware", min_value=0, value=0)
+        
+        if new_capacity:
+            new_capacity = int(new_capacity)
+            new_breach_count = column[column > new_capacity].count()
+            st.write(f"Number of forecasted breaches of new capacity: {new_breach_count}")
+    
+            new_max_TPS = data2[column_name].max()
+            new_nodes = math.ceil(new_max_TPS / totalCapPer) - totalServers
+    
+            break_date = "The new capacity is not expected to be exceeded within the forecast period."
+            for index, row in data2.iterrows():
+                if row[column_name] > new_capacity:
+                    break_date = row['ds']
+                    break
+
+    
+            st.write(f"The new capacity can sustain the growth until: {break_date}")
+    
+            try:
+                nodeCPU = applicationData.loc[applicationData['Application'] == AppName]['CPU'].item()
+            except KeyError:
+                nodeCPU = 0
+    
+            try:
+                nodeMem = applicationData.loc[applicationData['Application'] == AppName]['Memory'].item()
+            except KeyError:
+                nodeMem = 0
+
+    
+            if tpsIncrease >= 0:
+                st.markdown(f"Max TPS is <span style='color:red'>{round(tpsIncrease)} TPS</span> above current capacity", unsafe_allow_html=True)
+                st.markdown(f"Number of additional instances needed: <span style='color:red'>{int(newNodes)}</span>", unsafe_allow_html=True)
+                if nodeCPU > 0:
+                    st.markdown(f"Total additional CPUs required: <span style='color:red'>{math.ceil(newNodes*nodeCPU)}</span>", unsafe_allow_html=True)
+                if nodeMem > 0:
+                    st.markdown(f"Total additional memory required: <span style='color:red'>{math.ceil(newNodes*nodeMem)}GB</span>", unsafe_allow_html=True)
+            elif tpsIncrease < 0:
+                st.markdown(f"Max TPS is <span style='color:red'>{round(tpsIncrease)} TPS</span> below current capacity", unsafe_allow_html=True)
+                st.write("No additional instances needed")
+
+    
+    
+        # set risk to true for any date/time where peak forecast is over current capacity   
+        data2.loc[:, 'RiskPresent'] = np.where(data2.loc[:, column_name] > totalCapacity, True, False)
+    
+    
+    
+    
+        analysis = st.sidebar.checkbox("Risk Analysis for Services", value=False)
+    
+        if analysis:
+            st.subheader('Percentage of Overall Volume And Current Capacity For Each Service')
+
+            st.dataframe(serviceCapacityData.head(100))
+        
+            # Set tps capacity per component based on percentage of total load.
+            # If no percentage is available or if less than 10% set forecast to 10% of total load
+        
+            for index, row in serviceCapacityData.iterrows():
+                name = row['Services']
+                percentage = row.loc['Percentage']
+                if math.isnan(percentage): 
+                    st.write(f"{name} does not have breakdown percentage, setting to 10%")
+                    percentage = 0.1
+        
+                data2[f"{name}_Forecast"] = data2.loc[:, column_name] * percentage
+
+    
+    
+            for index, row in serviceCapacityData.iterrows():
+                name = row['Services']
+                riskName = name + "_RiskPresent"
+                tps = row['Current Capacity TPS']
+                if math.isnan(tps):
+                    st.write(name, "has no TPS capacity info")
+                    tps = 0
+                dataRisk = np.where(data2[name+"_Forecast"] > tps, True, False)
+                data2[riskName] = dataRisk
+    
+            risks = data2.filter(like='_RiskPresent').apply(lambda row: row[row==True], axis=1)
+
+    
+            #if risks.empty:
+            #    st.markdown("<span style='color:red'>No at risk services</span>", unsafe_allow_html=True)
+            #for i in risks:
+            #    service = i.replace("_RiskPresent", "")
+            #    riskF = i.replace("_RiskPresent", "_Forecast")
+            #    for index, row in serviceCapacityData.iterrows():
+            #        name = row['Services']
+            #        if(name==service):
+            #            capPer = row['Capacity/Node']
+            #            currNodes = row['No. of Nodes']
+            #            currCap = row['Current Capacity TPS']
+            #            try:
+            #                nodeCPU = row['CPU']
+            #            except KeyError:
+            #                nodeCPU = 0
+            #            try:
+            #                nodeMem = row['Memory']
+            #            except KeyError:
+            #                nodeMem = 0
+
+            #    for row, ind in data2.iterrows():
+            #        if ind[riskF] > currCap:
+            #            breakTPS = ind[riskF]
+            #            breakDate = ind["ds"]
+            #            if breakDate > datetime.now():
+            #                st.markdown(f"<span style='color:blue'><b>{service}:</b></span>", unsafe_allow_html=True)
+            #                st.write(f"Current capacity {currCap} TPS")
+            #                st.markdown("Service will hit <span style='color:red'>{round(breakTPS, 2)} TPS</span> at <span style='color:red'>{breakDate}</span>", unsafe_allow_html=True)
+            #                newNodes = math.ceil(breakTPS / capPer) - currNodes
+            #                st.write(f"Additional instances needed: {newNodes}")
+
+            #                if nodeCPU > 0:
+            #                    st.markdown(f"Total additional CPUs required: <span style='color:red'>{math.ceil(newNodes*nodeCPU)}</span>", unsafe_allow_html=True)
+            #                if nodeMem > 0:
+            #                    st.markdown(f"Total additional memory required: <span style='color:red'>{math.ceil(newNodes*nodeMem)}GB</span>", unsafe_allow_html=True)
+            #                st.write("")
+            #                break
+
+    
+            st.subheader('Max TPS for All Services')
+    
+            for i in serviceCapacityData['Services']:
+                service = i
+                riskF = i + "_Forecast"
+                serviceMax = data2[riskF].max()
+                for index, row in serviceCapacityData.iterrows():
+                    name = row['Services']
+                    if(name==service):
+                        capPer = row['Capacity/Node']
+                        currNodes = row['No. of Nodes']
+                        currCap = row['Current Capacity TPS']
+                        try:
+                            nodeCPU = row['CPU']
+                        except KeyError:
+                            nodeCPU = 0
+                        try:
+                            nodeMem = row['Memory']
+                        except KeyError:
+                            nodeMem = 0
+
+    
+                        try:
+                            k8 = row['K8']
+                        except KeyError:
+                            k8 = 'n'
+                        if k8 == 'y':
+                            podMem = row['pod mem limit']
+                            podCpu = row['pod cpu limit']
+                            nodeMem = row['node mem']
+                            nodeCpu = row['node cpu']
+    
+                st.markdown(f"<span style='color:blue'><b>{service}:</b></span>", unsafe_allow_html=True)
+                st.write(f"Current capacity: {currCap} TPS")
+                st.markdown(f"Max forecasted TPS: <span style='color:red'>{round(serviceMax, 2)}</span>", unsafe_allow_html=True)
+
+    
+                newNodes = math.ceil(serviceMax / capPer) - currNodes
+                tpsIncrease = serviceMax - currCap
+                if tpsIncrease >= 0:
+                    if k8 == 'y':
+                        totalMem = newNodes * podMem
+                        totalCpu = newNodes * podCpu
+                        numNeed = max(totalMem / nodeMem, totalCpu / nodeCpu)      
+                        st.markdown(f"Number of additional pods needed: <span style='color:red'>{int(newNodes)}</span>", unsafe_allow_html=True)
+                        st.markdown(f"Number of additional servers needed to support new pods: <span style='color:red'>{math.ceil(numNeed)}</span>", unsafe_allow_html=True)
+                    else:
+                        st.write(f"Max forecasted TPS is <span style='color:red'>{round(tpsIncrease)} TPS</span> above current capacity", unsafe_allow_html=True)
+                        st.markdown(f"Number of additional nodes needed: <span style='color:red'>{newNodes}</span>", unsafe_allow_html=True)
+                        if nodeCPU > 0:
+                            st.markdown(f"Total additional CPUs required: <span style='color:red'>{math.ceil(newNodes*nodeCPU)}</span>", unsafe_allow_html=True)
+                        if nodeMem > 0:
+                            st.markdown(f"Total additional memory required: <span style='color:red'>{math.ceil(newNodes*nodeMem)}GB</span>", unsafe_allow_html=True)
+                elif tpsIncrease < 0:
+                    st.write(f"Max forecasted TPS is <span style='color:red'>{round(tpsIncrease)} TPS</span> below current capacity", unsafe_allow_html=True)
+                    st.write("No additional nodes needed")
+                st.write("")
+
+    
+    
+        withRisk = st.sidebar.checkbox("Forecasted TPS Graphs for at Risk Services", value=False)
+        if withRisk:
+            st.subheader("Forecasted TPS Graphs for at Risk Services")
+            for i in risks:
+                service = i.replace("_RiskPresent", "")
+                riskF = i.replace("_RiskPresent", "_Forecast")    
+                for index, row in serviceCapacityData.iterrows():
+                    name = row['Services']
+                    if(name==service):
+                        capPer = row['Capacity/Node']
+                        currNodes = row['No. of Nodes']
+                        currCap = row['Current Capacity TPS']
+                        try:
+                            certResponseTime = row['Certified Response Time (s)']
+                        except KeyError:
+                            certResponseTime = 0
+
+                fig=go.Figure()
+                fig.add_trace(go.Scatter(x=data2["ds"], y=data2[riskF], name=riskF, mode="lines", line_color='blue'))
+                fig.add_hline(y=currCap, line_color="red", annotation_text="Current Capacity", annotation_position="top left")
+                if responseTime > certResponseTime:
+                    fig.add_hline(y=currCap/(responseTime/certResponseTime), line_color="yellow", annotation_text="Capacity with " + str(responseTime) + "s response times", annotation_position="top left")
+    
+                fig.update_layout(
+                    title=service.capitalize(), xaxis_title="Date", yaxis_title="TPS"
+                )
+                fig.update_xaxes(rangeslider_visible=True)
+                st.plotly_chart(fig)
+
+        withoutRisk = st.sidebar.checkbox("Forecasted TPS Graphs For Services Without Risk", value=False)        
+        if withoutRisk:
+            st.subheader("Forecasted TPS Graphs for at Risk Services")
+            services = data2.filter(like='_Forecast')
+            haveRisk = []
+    
+            for i in risks:
+                service = i.replace("_RiskPresent", "")
+                haveRisk.append(service)
+    
+            # Check if haveRisk is empty
+            if not haveRisk:
+                st.write("No services with risk")
+    
+            for i in services:
+                service = i.replace("_Forecast", "")
+                if service not in haveRisk:
+                
+                    for index, row in serviceCapacityData.iterrows():
+                        name = row['Services']
+                        if(name==service):
+                            capPer = row['Capacity/Node']
+                            currNodes = row['No. of Nodes']
+                            currCap = row['Current Capacity TPS']
+                            try:
+                                certResponseTime = row['Certified Response Time (s)']
+                            except KeyError:
+                                certResponseTime = 0
+
+                    fig=go.Figure()
+                    fig.add_trace(go.Scatter(x=data2["ds"], y=data2[i], name=service, mode="lines"))
+                    fig.add_hline(y=currCap, line_color="red", annotation_text="Current Capacity", annotation_position="top left")
+                    if responseTime > certResponseTime:
+                        fig.add_hline(y=currCap/(responseTime/certResponseTime), line_color="yellow", annotation_text="Capacity with " + str(responseTime) + "s response times", annotation_position="top left")
+                    fig.update_layout(
+                        title=service.capitalize(), xaxis_title="Date", yaxis_title="TPS"
+                    )
+                    st.plotly_chart(fig)
+
+    
+        addInfra = st.sidebar.checkbox("Additional Infrastructure to Meet Expected TPS", value=False)
+        #withRisk = st.subheader("Forecasted TPS Graphs for at Risk Services", value=False)
+        if addInfra:
+            if 'expectedTPS' in locals():
+                if expectedTPS > 0:
+                    SHOW = True
+                else:
+                    SHOW = False
+            else:
+                SHOW = False
+    
+            additional_infrastructure_needed = False
+    
+            if SHOW:
+                st.markdown("""### Additional Infrastructure to Meet Expected TPS""")
+
+    
+                #...
+    
+                st.write(f'**{AppName}:**')
+                st.write(f"Current capacity: {totalCapacity} TPS")
+                st.write(f"Expected TPS: {round(expectedTPS, 2)}")
+    
+                #...
+    
+                for index, row in serviceCapacityData.iterrows():
+                    service = row['Services']
+                    capPer = row['Capacity/Node']
+                    currNodes = row['No. of Nodes']
+                    currCap = row['Current Capacity TPS']
+                    percentage = row['Percentage']
+                    tpsExpected = percentage * expectedTPS
+    
+                    st.write(f'**{service}:**')
+                    st.write(f"Current capacity: {currCap} TPS")
+                    st.write(f"Expected TPS: {round(tpsExpected, 2)}")
+
+    
+                    newNodes = math.ceil(tpsExpected / capPer) - currNodes
+                    if newNodes > 0:
+                        additional_infrastructure_needed = True
+                    #...
+    
+            if not additional_infrastructure_needed:
+                st.write("No additional infrastructure is needed.")
