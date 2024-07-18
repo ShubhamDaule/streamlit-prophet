@@ -63,7 +63,7 @@ def write_bytesio_to_file(filename: str, bytesio: io.BytesIO) -> None:
     with open(filename, "wb") as outfile:
         outfile.write(bytesio.getbuffer())
 
-  @st.cache_data
+@st.cache_data
 def load_image(image_name: str) -> Image:
     """Displays an image.
     Parameters
