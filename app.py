@@ -1,220 +1,188 @@
 import streamlit as st
+import plotting as plotter
 import pandas as pd
 from prophet import Prophet
-
+import combined_bayes as pm
+import io
 from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error, root_mean_squared_error
-
+from prophet.plot import plot_plotly, plot_components_plotly
 from prophet.diagnostics import cross_validation, performance_metrics
 from prophet.plot import plot_cross_validation_metric
 import matplotlib.pyplot as plt
-from datetime import datetime
+import datetime
 import math
 import pickle
-import numpy as np
 import plotly.graph_objects as go
-
+import plotly.graph_objs as go
+import numpy as np
 from utils.load import load_image,load_toy_dataset
-from utils.models import prophet_modeling,plot_performance_metrics, load_data
+from utils.models import prophet_modeling,plot_performance_metrics, load_data#, risk_assessment
+st.title('DataGush')
+st.sidebar.title('Settings')
 
-#from lib.module import inputs
-#from lib.inputs.params import (
-#    input_holidays_params,
-#    input_prior_scale_params, 
-#    input_seasonality_params
-#    )
-
-# Info
-with st.expander("Prophet model to build a time series forecasting model in a few clicks", expanded=False):
-    st.write("Prophet model")
-    
-st.write("Time series forecasting")
-st.sidebar.title("DataGush")
-#st.sidebar.image(load_image("prophet_logo.PNG"), use_column_width=True)
-
-##
+################################################################################
+#                       DATA
+################################################################################
 st.sidebar.title("1. Data")
+df = None
 # Sidebar for dataset selection
 with st.sidebar.expander("Dataset", expanded=True):
-    use_default_dataset = st.checkbox("Select the Dataset", True)
-    # List of options 
-    choices = ["3DS 2.0", "CGK1", "CATS External", "CATS Internal", "Rule Engine"] 
-    #choices = ["3DS 2.0"]
-    # Single-select dropdown 
-    AppName = st.selectbox("Select an option", choices, index=0) 
-    default_sheet_name = str(AppName) + " Hourly Data"
-    #st.write("Sheet name: ", default_sheet_name)
-  
-    if use_default_dataset:
-        default_file_path = "/var/MLP/Shubham/ApplicationHourlyVolume.xlsx"
-        # default_sheet_name = st.selectbox("Select a Sheet", pd.ExcelFile(default_file_path).sheet_names, help="Select a sheet from the default Excel file")
+    option = st.selectbox("Choose an option", ("Use preloaded data", "Upload your own"))
+    if option == 'Use preloaded data':
+        choices = ["3DS 2.0", "CGK1"]
+        AppName = st.sidebar.selectbox("Select an option", choices, index = 0)
+        default_sheet_name = str(AppName) + " Hourly Data"
+        default_file_path = "/var/MLP/Dev/ApplicationHourlyVolume.xlsx"
         df = load_data(default_file_path, default_sheet_name)
-        #date_col = df.columns[0]
-        #target_col = df.column[1]
+        df['Date'] = pd.to_datetime(df['Date'])
+        
         df = df.rename(columns={'Date': "ds", 'Volume': "y"})
-        holidays_data_path = "/var/MLP/Shubham/holidays.xlsx"
+        holidays_data_path = "/var/MLP/Dev/holidays.xlsx"
         holidays_df1 = pd.read_excel(holidays_data_path)
-      
+
+
         # Get excel data and format
-        inputData = pd.ExcelFile("/var/MLP/Shubham/CapacityInput.xlsx")
+        inputData = pd.ExcelFile("/var/MLP/Dev/CapacityInput.xlsx")
         try:
             serviceCapacityData = pd.read_excel(inputData, AppName + " Services")
         except:
             #if capacity data not available set to 0 so forecasting can continue
             serviceCapacityData = {'Services': [AppName], 'No. of Nodes': [0], 'Capacity/Node': [0], 'Current Capacity TPS': [0], 'Percentage': [1]}
         applicationData = pd.read_excel(inputData, "Applications")
-
+       
     else:
-        uploaded_file = st.file_uploader("Upload an Excel file", type=["xlsx", "xls"], help="Upload your Excel dataset", accept_multiple_files=False)
-        if uploaded_file:
+        uploaded_file = st.sidebar.file_uploader("Upload an Excel file", type=["xlsx", "xls"], help="Upload your Excel dataset", accept_multiple_files=False)
+        if uploaded_file is not None:
             sheet_name = st.selectbox("Select a sheet", pd.ExcelFile(uploaded_file).sheet_names, help="Select a sheet from the uploaded Excel file")
             df = load_data(uploaded_file, sheet_name)
-
             # Column names
             if df is not None:
                 with st.sidebar.expander("Columns", expanded=True):
                     date_col = st.selectbox("Date column",sorted(df.columns))
                     target_col = st.selectbox( "Target column", sorted(set(df.columns) - {date_col}) )
                     df = df.rename(columns={date_col: "ds", target_col: "y"})
-                    
-            else:
-                st.write("Please Upload an Excel file")
+            else: 
+                st.write("Please upload an excel file")
                 st.stop()
-if df is None:
-    st.stop()
 
-
-# st.write(df)
-###********************************************************************************
-st.sidebar.title("2. Modelling")
-# Split data into training and testing sets
-st.sidebar.header('Data Splitting')
-# Get the first and last date
-first_date = df['ds'].min()
-last_date = df['ds'].max()
-# Display the first and last date in the sidebar
-st.sidebar.write(f"First Date: {first_date.strftime('%Y-%m-%d')}")
-st.sidebar.write(f"Last Date: {last_date.strftime('%Y-%m-%d')}")
-# Slider for selecting the percentage of data for training
-split_percentage = st.sidebar.slider('Select the percentage for training data', 0, 100, 100, step=10)
-# Calculate the split index based on the selected percentage
-split_index = int(len(df) * split_percentage / 100)
-
-# Split the data
-train = df[:split_index]
-test = df[split_index:]
-# Display the split data
-st.sidebar.write(f"Training Data Length: {train.shape[0]}")
-st.subheader('Training Data')
-st.write(train.head())
-st.sidebar.write(f"Testing Data Length: {test.shape[0]}")
-st.subheader('Testing Data')
-st.write(test.head())
- 
+################################################################################
+#                       HOLIDAYS
+################################################################################
+st.sidebar.title("2. Holidays")
 # Custom Holidays data
-# Holidays
-#with st.sidebar.expander("Holidays"):
-#    params = input_holidays_params(params, readme, config)
-
 with st.sidebar.expander("Custom Holidays"):
     holidays_data = st.file_uploader(label="Upload a excel file with holiday and dates", type=["xlsx", "xls"], help="holiday_data_upload", accept_multiple_files=False)
     if holidays_data is not None:
         holidays_df = pd.read_excel(holidays_data)
     else:
         holidays_df = None
-#if AppName == '3DS 2.0':
-#    filename_3ds = "/var/MLP/Shubham/DataGush_model.sav"
-#    loaded_model = pickle.load(open(filename_3ds, 'rb')) 
-#else:
 
-# ypred = loaded_model.predict(data)
-
-
-
-##********************** Forecast *******************************    
+################################################################################
+#                       FORECASTING
+################################################################################
+def to_excel(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, sheet_name ='Sheet1')
+    processed_data = output.getvalue() 
+    return processed_data
 st.sidebar.title("3. Forecast")
+numMonths = st.sidebar.number_input("Number of Periods(Months)", min_value=1, value=1)
+view_error = st.sidebar.checkbox("Show error metrics", value = False)
+show_plots = st.sidebar.checkbox("Show plots", value=True)
+#download = st.sidebar.checkbox("Download forecast when complete", value = False)
+generate_button = st.sidebar.button("Generate Forecast")
 #forecast_data = st.sidebar.checkbox("Launch Forecast", value=True)
-if use_default_dataset:
-    holidays_df = holidays_df1
-    if holidays_data is not None:
-        holidays_df = holidays_df
-    #st.write('Run predefined model')
-    #if loaded_model:
-    #    model = loaded_model
-    if AppName == '3DS 2.0':
-        filename_3ds = "/var/MLP/Shubham/DataGush_model.sav"
-        loaded_model = pickle.load(open(filename_3ds, 'rb')) 
-        model = loaded_model
+if generate_button:
+
+    if option == 'Use preloaded data':
+        holidays_df = holidays_df1
+        if holidays_data is not None:
+            holidays_df = holidays_df
+        #st.write('Run predefined model')
+        if AppName == '3DS 2.0':
+            filename_3ds = "/var/MLP/Dev/pickle_3ds.sav"
+            loaded_model = pickle.load(open(filename_3ds, 'rb')) 
+            model = loaded_model
+        else:
+            # Perform modeling
+            model = prophet_modeling(holidays_df)
+            model.fit(df)
     else:
-        # Perform modeling
-        model = prophet_modeling(holidays_df)
-        model.fit(train)
-else: 
-    #st.write('Run model finetuning')
-    model = finetuned_model(holidays_df)
-    # Fit the model
-    model.fit(train)
-#st.sidebar.header('Future prediction')
-numMonths = st.sidebar.number_input("Number of Periods(Months)", min_value=0, value=0)
-#frequency = st.sidebar.selectbox("Frequency", ["D", "H", "W", "M"], index=0)
-# Make future dataframe for the period of the test set
+        
+        model = pm.predict(df, holidays_df)
 
-firsttwo = df['ds'].iloc[:2]
-timedif = (firsttwo[1] - firsttwo[0]).total_seconds()
-if timedif <= 3600:
-    #st.write('hourly data')
-    future= model.make_future_dataframe(periods=730*numMonths,freq='H')
-elif timedif <= 86400:
-    future= model.make_future_dataframe(periods=30*numMonths,freq='D')
-elif timedif >=2419200:
-    future= model.make_future_dataframe(periods=numMonths,freq='M')
-else:
-    future= model.make_future_dataframe(periods=730*numMonths,freq='H')
-#future = model.make_future_dataframe(periods=730*2,freq='H')
- 
-# rmse = round(root_mean_squared_error(data.y,forecast.yhat[:train.shape[0]]))
-# st.write('RMSE: ',rmse)
-show_plots = st.sidebar.checkbox("Launch Forecast", value=False)
-
-if show_plots:
+    
+    firsttwo = df['ds'].iloc[:2]
+    timedif = (firsttwo[1] - firsttwo[0]).total_seconds()
+    
+    if timedif <= 3600:
+        #st.write('hourly data')
+        future= model.make_future_dataframe(periods=730*numMonths,freq='h')
+    elif timedif <= 86400:
+        future= model.make_future_dataframe(periods=30*numMonths,freq='D')
+    elif timedif >=2419200:
+        future= model.make_future_dataframe(periods=numMonths,freq='M')
+    else:
+        future= model.make_future_dataframe(periods=730*numMonths,freq='h')
+    #future = model.make_future_dataframe(periods=730*2,freq='H')
     forecast = model.predict(future)
+    
     st.subheader('Forecast Results')  
+    
     st.write(forecast)
-    ypred = forecast[:train.shape[0]]
     
-    # Display performance metrics
-    st.subheader('Performance Metrics')
-    # mae = round(mean_absolute_error(train.y,forecast.yhat[:train.shape[0]]),2)
-    mae = round(mean_absolute_error(train.y, ypred.yhat),2)
-    st.write('MAE: ',mae)
-    mape = round(mean_absolute_percentage_error(train.y, ypred.yhat),2)
-    st.write('MAPE: ',mape)
-    
-    # Plot forecast
-    st.subheader('Forecast')
-    fig1 = model.plot(forecast)
-    st.pyplot(fig1)
-    
-    # Plot components
-    st.subheader('Components')
-    fig2 = model.plot_components(forecast)
-    st.pyplot(fig2)
+    ypred = forecast[:df.shape[0]]
 
-    # import streamlit as st
-    # from datetime import datetime, timedelta
-    fig=go.Figure()
     
-    fig.add_trace(go.Scatter(x=forecast["ds"], y=forecast['yhat_upper'], name="Forecast_Upper", mode="lines", line_color="lightblue"))
-    # fig.add_trace(go.Scatter(x=ypred["ds"], y=ypred['yhat'], name="Predicted", mode="lines", line_color="blue"))
-    fig.add_trace(go.Scatter(x=forecast["ds"], y=forecast['yhat'], name="Forecast", mode="lines", line_color="blue"))
-    fig.add_trace(go.Scatter(x=train["ds"], y=train['y'], name="Actual", mode="lines", line_color="green"))
+    if show_plots:
+        # Plot forecast
+        st.subheader('Forecast')
+        fig1 = model.plot(forecast)
+        st.pyplot(fig1)
+        fig_AN = plotter.plot_AN(model, forecast)
+        st.plotly_chart(fig_AN)    
+        # Plot components
+        st.subheader('Components')
+        fig2 = model.plot_components(forecast)
+        st.pyplot(fig2)
     
-    fig.update_layout(
-        title= "Hourly Volume Forecast", xaxis_title="Date", yaxis_title="Volume"
-    )
-    st.plotly_chart(fig)
     
+        # import streamlit as st
+        # from datetime import datetime, timedelta
     
-    ##********************** Service Risk Assesment ******************************* 
+        fig=go.Figure()
+        
+        fig.add_trace(go.Scatter(x=forecast["ds"], y=forecast['yhat_upper'], name="Forecast_Upper", mode="lines", line_color="lightblue"))
+        # fig.add_trace(go.Scatter(x=ypred["ds"], y=ypred['yhat'], name="Predicted", mode="lines", line_color="blue"))
+        fig.add_trace(go.Scatter(x=forecast["ds"], y=forecast['yhat'], name="Forecast", mode="lines", line_color="blue"))
+        fig.add_trace(go.Scatter(x=df["ds"], y=df['y'], name="Actual", mode="lines", line_color="green"))
+    
+        fig.update_layout(
+            title= "Hourly Volume Forecast", xaxis_title="Date", yaxis_title="Volume"
+        )
+    
+        st.plotly_chart(fig)
+        
+#################################################################################
+##                       ERROR
+#################################################################################
+ #   if download:
+ #       excel_file = to_excel(forecast)
+ #       st.download_button(label="Download forecast data as Excel",
+ #                               data=excel_file,
+ #                               file_name = 'forecast_data.xlsx',
+ #                               mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+ 
+    if view_error and generate_button:
+        error = pm.evaluate_model(model)
+        st.write("MAPE: ", error)
+
+
+#################################################################################
+#                            Service Risk Assesment  
+#################################################################################
+
     st.sidebar.title("4. Service Risk Assesment")
     
     responseTime = st.sidebar.number_input("Expected Response Time", min_value=0.0, max_value= 2.0, value=0.0, step=0.1)
