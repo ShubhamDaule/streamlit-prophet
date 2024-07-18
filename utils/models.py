@@ -14,7 +14,7 @@ def load_data(file, sheet_name=None):
     else:
         return pd.read_excel(file)
 
-
+ 
 # Function to perform Prophet modeling
 def finetuned_model(holidays=None):
     model = Prophet(
@@ -27,17 +27,27 @@ def prophet_modeling(holidays=None):
                     'holidays_prior_scale': 8.697490026177835, 
                     'changepoint_range': 0.7166666666666667, 
                     'changepoint_prior_scale': 10.0}
-     model = Prophet(
+
+    
+    model = Prophet(
             changepoint_prior_scale = best_params['changepoint_prior_scale'],
             seasonality_prior_scale = best_params['seasonality_prior_scale'],
             holidays_prior_scale = best_params['holidays_prior_scale'],
             seasonality_mode = 'multiplicative',
-     )
+            changepoint_range = best_params['changepoint_range'],
+            holidays= holidays,
+            interval_width = best_params['interval_width'],  #0.90,
+            yearly_seasonality=True,
+            weekly_seasonality=False, 
+            daily_seasonality=True,              
+        )
+    
     model.add_seasonality(name = 'weekly', period = 7, mode = 'multiplicative',  fourier_order = 50)
     model.add_seasonality(name = 'daily',  period = 1, mode   = 'multiplicative',  fourier_order = 50)
     model.add_seasonality(name = 'yearly', period = 365.25, mode = 'multiplicative', fourier_order = 50)
 
     return model
+
 
 # Function to plot performance metrics
 def plot_performance_metrics(perf_metrics):
